@@ -18,11 +18,27 @@
 import os.path as path
 from urlparse import urlparse
 
-from neutron.api.v2 import attributes as attr
 try:
-    from neutron_lib import exceptions as exc
+    from neutron.api.v2.attributes import ATTR_NOT_SPECIFIED
+except:
+    from neutron_lib.constants import ATTR_NOT_SPECIFIED
+try:
+    from neutron.common.exceptions import ServiceUnavailable
 except ImportError:
-    from neutron.common import exceptions as exc
+    from neutron_lib.exceptions import ServiceUnavailable
+try:
+    from neutron.common.exceptions import InvalidInput
+except ImportError:
+    from neutron_lib.exceptions import InvalidInput
+try:
+    from neutron.common.exceptions import NeutronException
+except ImportError:
+    from neutron_lib.exceptions import NeutronException
+from neutron.common import exceptions as neutron_exc
+try:
+    from neutron_lib import exceptions as neutron_lib_exc
+except ImportError:
+    neutron_lib_exc = None
 from neutron.common.config import cfg
 from neutron.db import portbindings_base
 from neutron.db import quota_db  # noqa
@@ -103,15 +119,17 @@ def _raise_contrail_error(info, obj_name):
                 info['resource'] = obj_name
             if exc_name == 'VirtualRouterNotFound':
                 raise HttpResponseError(info)
-            if hasattr(exc, exc_name):
-                raise getattr(exc, exc_name)(**info)
+            if hasattr(neutron_exc, exc_name):
+                raise getattr(neutron_exc, exc_name)(**info)
             if hasattr(l3, exc_name):
                 raise getattr(l3, exc_name)(**info)
             if hasattr(securitygroup, exc_name):
                 raise getattr(securitygroup, exc_name)(**info)
             if hasattr(allowedaddresspairs, exc_name):
                 raise getattr(allowedaddresspairs, exc_name)(**info)
-        raise exc.NeutronException(**info)
+            if neutron_lib_exc and hasattr(neutron_lib_exc, exc_name):
+                raise getattr(neutron_lib_exc, exc_name)(**info)
+        raise NeutronException(**info)
 
 
 def get_keystone_info():
@@ -161,7 +179,7 @@ def get_keystone_auth_info():
     return (admin_user, admin_password, admin_tenant_name)
 
 
-class InvalidContrailExtensionError(exc.ServiceUnavailable):
+class InvalidContrailExtensionError(ServiceUnavailable):
     message = _("Invalid Contrail Extension: %(ext_name) %(ext_class)")
 
 
@@ -267,7 +285,6 @@ class NeutronPluginContrailCoreBase(neutron_plugin_base_v2.NeutronPluginBaseV2,
 
     def create_network(self, context, network):
         """Creates a new Virtual Network."""
-
         return self._create_resource('network', context, network)
 
     def get_network(self, context, network_id, fields=None):
@@ -311,10 +328,10 @@ class NeutronPluginContrailCoreBase(neutron_plugin_base_v2.NeutronPluginBaseV2,
                 gateway = '::'
             subnet['subnet']['gateway_ip'] = gateway
 
-        if subnet['subnet']['host_routes'] != attr.ATTR_NOT_SPECIFIED:
+        if subnet['subnet']['host_routes'] != ATTR_NOT_SPECIFIED:
             if (len(subnet['subnet']['host_routes']) >
                     cfg.CONF.max_subnet_host_routes):
-                raise exc.HostRoutesExhausted(subnet_id=subnet[
+                raise neutron_exc.HostRoutesExhausted(subnet_id=subnet[
                     'subnet'].get('id', _('new subnet')),
                     quota=cfg.CONF.max_subnet_host_routes)
 
@@ -403,7 +420,7 @@ class NeutronPluginContrailCoreBase(neutron_plugin_base_v2.NeutronPluginBaseV2,
         # the new_ips contain all of the fixed_ips that are to be updated
         if len(new_ips) > cfg.CONF.max_fixed_ips_per_port:
             msg = _('Exceeded maximim amount of fixed ips per port')
-            raise exc.InvalidInput(error_message=msg)
+            raise InvalidInput(error_message=msg)
 
         # Remove all of the intersecting elements
         for original_ip in original_ips[:]:
@@ -421,6 +438,85 @@ class NeutronPluginContrailCoreBase(neutron_plugin_base_v2.NeutronPluginBaseV2,
 
     def _list_vrouters(self, context, filters=None, fields=None):
         return self._list_resource('virtual_router', context, filters, fields)
+
+    @staticmethod
+    def _get_port_vhostuser_socket_name(port, port_id=None):
+        name = 'tap' + (port_id if port_id else port['id'])
+        name = name[:NIC_NAME_LEN]
+        return path.join(cfg.CONF.VROUTER.vhostuser_sockets_dir,
+                         'uvh_vif_' + name)
+
+    def _update_vhostuser_vif_details_for_port(self, port, port_id=None):
+        vif_details = {
+            portbindings.VHOST_USER_MODE: \
+                portbindings.VHOST_USER_MODE_CLIENT,
+            portbindings.VHOST_USER_SOCKET: \
+                self._get_port_vhostuser_socket_name(port, port_id),
+            portbindings.VHOST_USER_VROUTER_PLUG: True
+        }
+
+        if portbindings.VIF_DETAILS not in port:
+            port[portbindings.VIF_DETAILS] = vif_details
+        else:
+            port[portbindings.VIF_DETAILS].update(vif_details)
+
+        return port
+
+    @staticmethod
+    def _delete_vhostuser_vif_details_from_port(port, original):
+        # Nothing to do if the original port (the one that is saved in the API
+        # server) does not contains any vif details.
+        if not portbindings.VIF_DETAILS in original:
+            return
+
+        # Copy vif details from the original port and delete all vhostuser
+        # related fields
+        vif_details = dict(original[portbindings.VIF_DETAILS])
+        to_delete = [portbindings.VHOST_USER_MODE,
+                portbindings.VHOST_USER_SOCKET,
+                portbindings.VHOST_USER_VROUTER_PLUG]
+        for item in to_delete:
+            if item in vif_details:
+                del vif_details[item]
+
+        # Since the API server does not support deletion of a particular filed
+        # from vif details, we use the original vif details with all the
+        # vhostuser fields removed + any updates that comes in the 'port'
+        # argument. Perhaps it would be better to introduce some kind of a
+        # 'unspecified' value, that would indicate that the value should be
+        # removed from the vif details by the API server?
+        if portbindings.VIF_DETAILS not in port:
+            port[portbindings.VIF_DETAILS] = vif_details
+        else:
+            vif_details.update(port[portbindings.VIF_DETAILS])
+            port[portbindings.VIF_DETAILS] = vif_details
+
+    @staticmethod
+    def _port_vnic_is_normal(port):
+        if portbindings.VNIC_TYPE in port and \
+                port[portbindings.VNIC_TYPE] == portbindings.VNIC_NORMAL:
+            return True
+
+    def _is_dpdk_enabled(self, context, port):
+        vrouter = {'dpdk_enabled': False}
+
+        # There may be cases when 'binding:host_id' of a port is not specified.
+        # For example when port is created by hand using neutron port-create
+        # command, which does not bind the port to any given host.
+        if 'binding:host_id' in port and port['binding:host_id'] and \
+                port['binding:host_id'] is not ATTR_NOT_SPECIFIED:
+            try:
+                vrouter = self._get_vrouter_config(context,
+                                               ['default-global-system-config',
+                                               port['binding:host_id']])
+            except HttpResponseError as e:
+              if e.response_info['exception'] == 'VirtualRouterNotFound':
+                  return False
+              else:
+                  raise e
+
+        return vrouter['dpdk_enabled']
+
 
     def create_port(self, context, port):
         """Creates a port on the specified Virtual Network."""
