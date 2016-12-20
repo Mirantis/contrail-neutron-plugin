@@ -58,7 +58,7 @@ class LoadbalancerManager(ResourceManager):
     def make_properties(self, lb):
         props = LoadbalancerType()
         for key, mapping in self._loadbalancer_type_mapping.iteritems():
-            if mapping in lb and lb[mapping] != attributes.ATTR_NOT_SPECIFIED:
+            if mapping in lb and lb[mapping] != ATTR_NOT_SPECIFIED:
                 setattr(props, key, lb[mapping])
         return props
 
@@ -76,7 +76,7 @@ class LoadbalancerManager(ResourceManager):
             return None
 
         port_id = vmi_list[0]['uuid']
-        if not props.vip_address or props.vip_address == attributes.ATTR_NOT_SPECIFIED:
+        if not props.vip_address or props.vip_address == ATTR_NOT_SPECIFIED:
             try:
                 vmi = self._api.virtual_machine_interface_read(id=port_id)
             except NoIdError as ex:
@@ -147,11 +147,12 @@ class LoadbalancerManager(ResourceManager):
         try:
             vnet = self._api.virtual_network_read(id=network_id)
         except NoIdError:
-            raise n_exc.NetworkNotFound(net_id=network_id)
+            raise NetworkNotFound(net_id=network_id)
 
         vmi = VirtualMachineInterface(lb_id, project)
         vmi.set_virtual_network(vnet)
-        vmi.set_virtual_machine_interface_device_owner(n_constants.DEVICE_OWNER_LOADBALANCER)
+        vmi.set_virtual_machine_interface_device_owner(
+            DEVICE_OWNER_LOADBALANCER)
 
         sg_obj = SecurityGroup("default", project)
         vmi.add_security_group(sg_obj)
@@ -160,7 +161,7 @@ class LoadbalancerManager(ResourceManager):
         iip_obj = InstanceIp(name=lb_id)
         iip_obj.set_virtual_network(vnet)
         iip_obj.set_virtual_machine_interface(vmi)
-        if ip_address and ip_address != attributes.ATTR_NOT_SPECIFIED:
+        if ip_address and ip_address != ATTR_NOT_SPECIFIED:
             iip_obj.set_instance_ip_address(ip_address)
         self._api.instance_ip_create(iip_obj)
         iip = self._api.instance_ip_read(id=iip_obj.uuid)
@@ -202,6 +203,9 @@ class LoadbalancerManager(ResourceManager):
         Create a loadbalancer.
         """
         l = loadbalancer['loadbalancer']
+        if (l['provider'] == ATTR_NOT_SPECIFIED):
+            l['provider'] = "opencontrail"
+        sas_obj = self.check_provider_exists(l['provider'])
         tenant_id = self._get_tenant_id_for_create(context, l)
         project = self._project_read(project_id=tenant_id)
 
@@ -249,7 +253,7 @@ class LoadbalancerManager(ResourceManager):
                 continue
             if getattr(props, field) != lb[field]:
                 msg = 'Attribute %s in loadbalancer %s is immutable' % (field, id)
-                raise n_exc.BadRequest(resource='loadbalancer', msg=msg)
+                raise exc.BadRequest(resource='loadbalancer', msg=msg)
 
         # update
         change = self.update_properties_subr(props, lb)
