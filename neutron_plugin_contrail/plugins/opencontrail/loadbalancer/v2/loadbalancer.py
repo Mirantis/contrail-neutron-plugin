@@ -1,9 +1,22 @@
 #
 # Copyright (c) 2014 Juniper Networks, Inc. All rights reserved.
 #
-from neutron.api.v2 import attributes
-from neutron.common import exceptions as n_exc
-from neutron.common import constants as n_constants
+try:
+    from neutron.api.v2.attributes import ATTR_NOT_SPECIFIED
+except:
+    from neutron_lib.constants import ATTR_NOT_SPECIFIED
+try:
+    from neutron.common.constants import DEVICE_OWNER_LOADBALANCER
+except:
+    from neutron_lib.constants import DEVICE_OWNER_LOADBALANCER
+try:
+    from neutron.common.exceptions import NetworkNotFound
+except ImportError:
+    from neutron_lib.exceptions import NetworkNotFound
+try:
+    from neutron.common.exceptions import BadRequest
+except ImportError:
+    from neutron_lib.exceptions import BadRequest
 
 from neutron_lbaas.extensions import loadbalancerv2
 
