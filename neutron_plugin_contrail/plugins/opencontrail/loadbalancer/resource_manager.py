@@ -32,6 +32,7 @@ except ImportError:
         from neutron_lbaas.extensions.loadbalancerv2 import StateInvalid
     except ImportError:
         from neutron_lbaas.extensions.loadbalancer import StateInvalid
+
 try:
     from neutron_lib import constants
 except ImportError:
