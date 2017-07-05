@@ -206,7 +206,8 @@ class NeutronPluginContrailCoreBase(neutron_plugin_base_v2.NeutronPluginBaseV2,
 
     def __init__(self):
         super(NeutronPluginContrailCoreBase, self).__init__()
-        portbindings_base.register_port_dict_function()
+        if hasattr(portbindings_base, 'register_port_dict_function'):
+            portbindings_base.register_port_dict_function()
         cfg.CONF.register_opts(vnc_opts, 'APISERVER')
         cfg.CONF.register_opts(analytics_opts, 'COLLECTOR')
         cfg.CONF.register_opts(vrouter_opts, 'VROUTER')
