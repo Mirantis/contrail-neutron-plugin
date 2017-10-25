@@ -57,6 +57,7 @@ except ImportError:
 from neutron.extensions import securitygroup
 from neutron_plugin_contrail.extensions import serviceinterface
 from neutron_plugin_contrail.extensions import vfbinding
+from neutron_plugin_contrail.extensions import baremetal_vif
 from neutron import neutron_plugin_base_v2
 try:
     from neutron.openstack.common import importutils
@@ -250,7 +251,8 @@ class NeutronPluginContrailCoreBase(neutron_plugin_base_v2.NeutronPluginBaseV2,
                                     portbindings_base.PortBindingBaseMixin,
                                     external_net.External_net,
                                     serviceinterface.Serviceinterface,
-                                    vfbinding.Vfbinding):
+                                    vfbinding.Vfbinding,
+                                    baremetal_vif.BaremetalVIF):
 
     supported_extension_aliases = [
         "security-group",
@@ -584,6 +586,19 @@ class NeutronPluginContrailCoreBase(neutron_plugin_base_v2.NeutronPluginBaseV2,
         """Creates a port on the specified Virtual Network."""
 
         port = self._create_resource('port', context, port)
+
+        # For vhosuser we have to update the binding vif_details fields. We
+        # have to do this through update and not while creating the port above
+        # as we need the 'id' of the port that is not available prior to
+        # creation of the port.
+        if dpdk_enabled:
+            self._update_vhostuser_vif_details_for_port(port)
+            port = self._update_resource('port', context, port['id'],
+                                         {'port': port})
+
+        if self.is_port_baremetal(port):
+            self.bind_baremetal_port(port)
+
         return port
 
     def get_port(self, context, port_id, fields=None):
@@ -605,6 +620,35 @@ class NeutronPluginContrailCoreBase(neutron_plugin_base_v2.NeutronPluginBaseV2,
                 original['fixed_ips'], port['port']['fixed_ips'])
             port['port']['fixed_ips'] = prev_ips + added_ips
 
+        if 'binding:host_id' in port['port']:
+            original['binding:host_id'] = port['port']['binding:host_id']
+
+        if self._port_vnic_is_normal(original):
+            # If the port vnic is normal we have two options. It is either
+            # kernel vRouter port or vhostuser (DPDK vRouter) one.
+            if self._is_dpdk_enabled(context, original):
+                port['port'][portbindings.VIF_TYPE] = \
+                        portbindings.VIF_TYPE_VHOST_USER
+                self._update_vhostuser_vif_details_for_port(port['port'],
+                                                            port_id)
+            else:
+                port['port'][portbindings.VIF_TYPE] = \
+                        VIF_TYPE_VROUTER
+                self._delete_vhostuser_vif_details_from_port(port['port'],
+                                                             original)
+        else:
+            # If the port vnic is not normal, it can not be of vhostuser (DPDK
+            # vRouter) type. Just delete any vhostuser related fields.
+            self._delete_vhostuser_vif_details_from_port(port['port'],
+                                                         original)
+
+        if self.is_port_baremetal(port['port']):
+            port['port']['id'] = port_id
+            if self.should_bind_port(port['port']):
+                self.bind_baremetal_port(port['port'])
+            else:
+                self.unbind_baremetal_port(port['port'])
+
         return self._update_resource('port', context, port_id, port)
 
     def delete_port(self, context, port_id):
@@ -615,6 +659,11 @@ class NeutronPluginContrailCoreBase(neutron_plugin_base_v2.NeutronPluginBaseV2,
         the remote interface is first un-plugged and then the port
         is deleted.
         """
+
+        original = self._get_port(context, port_id)
+
+        if self.is_port_baremetal(original):
+            self.unbind_baremetal_port(original)
 
         self._delete_resource('port', context, port_id)
 
