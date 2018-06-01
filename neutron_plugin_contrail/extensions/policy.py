@@ -1,9 +1,19 @@
 from abc import abstractmethod
 
-from neutron.api.v2 import attributes as attr
+try:
+    from neutron.api.v2.attributes import UUID_PATTERN
+except:
+    from neutron_lib.constants import UUID_PATTERN
 from neutron.api.v2 import base
-from neutron.common import exceptions as qexception
-from neutron.api import extensions
+try:
+    from neutron.common.exceptions import NotFound
+except ImportError:
+    from neutron_lib.exceptions import NotFound
+try:
+    from neutron.api.extensions import ExtensionDescriptor
+except ImportError:
+    from neutron_lib.api.extensions import ExtensionDescriptor
+from neutron.api.extensions import ResourceExtension
 from neutron import manager
 
 try:
@@ -11,16 +21,23 @@ try:
 except ImportError:
     from oslo_config import cfg
 
+# Ocata compatibility
+_use_plugins_directory = False
+try:
+    from neutron_lib.plugins import directory
+    _use_plugins_directory = True
+except ImportError:
+    pass
 
 # Policy Exceptions
-class PolicyNotFound(qexception.NotFound):
+class PolicyNotFound(NotFound):
     message = _("Policy %(id)s could not be found")
 
 # Attribute Map
 RESOURCE_ATTRIBUTE_MAP = {
     'policys': {
         'id': {'allow_post': False, 'allow_put': False,
-               'validate': {'type:regex': attr.UUID_PATTERN},
+               'validate': {'type:regex': UUID_PATTERN},
                'is_visible': True},
         'name': {'allow_post': True, 'allow_put': False,
                  'is_visible': True, 'default': ''},
@@ -37,7 +54,7 @@ RESOURCE_ATTRIBUTE_MAP = {
 }
 
 
-class Policy(extensions.ExtensionDescriptor):
+class Policy(ExtensionDescriptor):
 
     @classmethod
     def get_name(cls):
@@ -63,7 +80,11 @@ class Policy(extensions.ExtensionDescriptor):
     def get_resources(cls):
         """ Returns Ext Resources """
         exts = []
-        plugin = manager.NeutronManager.get_plugin()
+        if _use_plugins_directory:
+            plugin = directory.get_plugin()
+        else:
+            plugin = manager.NeutronManager.get_plugin()
+
         for resource_name in ['policy']:
             collection_name = resource_name + "s"
             params = RESOURCE_ATTRIBUTE_MAP.get(collection_name, dict())
@@ -75,9 +96,8 @@ class Policy(extensions.ExtensionDescriptor):
                                               plugin, params,
                                               member_actions=member_actions)
 
-            ex = extensions.ResourceExtension(collection_name,
-                                              controller,
-                                              member_actions=member_actions)
+            ex = ResourceExtension(collection_name, controller,
+                                   member_actions=member_actions)
             exts.append(ex)
 
         return exts
