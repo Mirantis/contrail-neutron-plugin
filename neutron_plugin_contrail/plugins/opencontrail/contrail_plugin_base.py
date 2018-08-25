@@ -183,7 +183,8 @@ class NeutronPluginContrailCoreBase(neutron_plugin_base_v2.NeutronPluginBaseV2,
 
     def __init__(self):
         super(NeutronPluginContrailCoreBase, self).__init__()
-        portbindings_base.register_port_dict_function()
+        if hasattr(portbindings_base, 'register_port_dict_function'):
+            portbindings_base.register_port_dict_function()
         utils.register_vnc_api_options()
         self._parse_class_args()
         self.api_servers = utils.RoundRobinApiServers()
@@ -347,10 +348,11 @@ class NeutronPluginContrailCoreBase(neutron_plugin_base_v2.NeutronPluginBaseV2,
         # These ips are still on the port and haven't been removed
         prev_ips = []
 
-        # the new_ips contain all of the fixed_ips that are to be updated
-        if len(new_ips) > cfg.CONF.max_fixed_ips_per_port:
-            msg = _('Exceeded maximim amount of fixed ips per port')
-            raise InvalidInput(error_message=msg)
+        if hasattr(cfg.CONF, 'max_fixed_ips_per_port'):
+            # the new_ips contain all of the fixed_ips that are to be updated
+            if len(new_ips) > cfg.CONF.max_fixed_ips_per_port:
+                msg = _('Exceeded maximum amount of fixed ips per port')
+                raise InvalidInput(error_message=msg)
 
         # Remove all of the intersecting elements
         for original_ip in original_ips[:]:
