@@ -18,8 +18,27 @@
 import os.path as path
 from urlparse import urlparse
 
-from neutron.api.v2 import attributes as attr
-from neutron.common import exceptions as exc
+try:
+    from neutron.api.v2.attributes import ATTR_NOT_SPECIFIED
+except:
+    from neutron_lib.constants import ATTR_NOT_SPECIFIED
+try:
+    from neutron.common.exceptions import ServiceUnavailable
+except ImportError:
+    from neutron_lib.exceptions import ServiceUnavailable
+try:
+    from neutron.common.exceptions import InvalidInput
+except ImportError:
+    from neutron_lib.exceptions import InvalidInput
+try:
+    from neutron.common.exceptions import NeutronException
+except ImportError:
+    from neutron_lib.exceptions import NeutronException
+from neutron.common import exceptions as neutron_exc
+try:
+    from neutron_lib import exceptions as neutron_lib_exc
+except ImportError:
+    neutron_lib_exc = None
 from neutron.common.config import cfg
 from neutron.db import portbindings_base
 from neutron.db import quota_db  # noqa
@@ -30,6 +49,7 @@ from neutron.extensions import portbindings
 from neutron.extensions import securitygroup
 from neutron_plugin_contrail.extensions import serviceinterface
 from neutron_plugin_contrail.extensions import vfbinding
+from neutron_plugin_contrail.extensions import baremetal_vif
 from neutron import neutron_plugin_base_v2
 try:
     from neutron.openstack.common import importutils
@@ -41,10 +61,6 @@ try:
 except ImportError:
     from oslo_log import log as logging
 
-try:
-    from neutron_lib import exceptions as libexc
-except ImportError:
-    libexc = None
 
 # Constant for max length of network interface names
 # eg 'bridge' in the Network class or 'devname' in
@@ -104,17 +120,17 @@ def _raise_contrail_error(info, obj_name):
                 info['resource'] = obj_name
             if exc_name == 'VirtualRouterNotFound':
                 raise HttpResponseError(info)
-            if hasattr(exc, exc_name):
-                raise getattr(exc, exc_name)(**info)
+            if hasattr(neutron_exc, exc_name):
+                raise getattr(neutron_exc, exc_name)(**info)
             if hasattr(l3, exc_name):
                 raise getattr(l3, exc_name)(**info)
             if hasattr(securitygroup, exc_name):
                 raise getattr(securitygroup, exc_name)(**info)
             if hasattr(allowedaddresspairs, exc_name):
                 raise getattr(allowedaddresspairs, exc_name)(**info)
-            if libexc and hasattr(libexc, exc_name):
-                raise getattr(libexc, exc_name)(**info)
-        raise exc.NeutronException(**info)
+            if neutron_lib_exc and hasattr(neutron_lib_exc, exc_name):
+                raise getattr(neutron_lib_exc, exc_name)(**info)
+        raise NeutronException(**info)
 
 
 def get_keystone_info():
@@ -164,7 +180,7 @@ def get_keystone_auth_info():
     return (admin_user, admin_password, admin_tenant_name)
 
 
-class InvalidContrailExtensionError(exc.ServiceUnavailable):
+class InvalidContrailExtensionError(ServiceUnavailable):
     message = _("Invalid Contrail Extension: %(ext_name) %(ext_class)")
 
 
@@ -177,7 +193,8 @@ class NeutronPluginContrailCoreBase(neutron_plugin_base_v2.NeutronPluginBaseV2,
                                     portbindings_base.PortBindingBaseMixin,
                                     external_net.External_net,
                                     serviceinterface.Serviceinterface,
-                                    vfbinding.Vfbinding):
+                                    vfbinding.Vfbinding,
+                                    baremetal_vif.BaremetalVIF):
 
     supported_extension_aliases = [
         "security-group",
@@ -236,7 +253,8 @@ class NeutronPluginContrailCoreBase(neutron_plugin_base_v2.NeutronPluginBaseV2,
 
     def __init__(self):
         super(NeutronPluginContrailCoreBase, self).__init__()
-        portbindings_base.register_port_dict_function()
+        if hasattr(portbindings_base, 'register_port_dict_function'):
+            portbindings_base.register_port_dict_function()
         cfg.CONF.register_opts(vnc_opts, 'APISERVER')
         cfg.CONF.register_opts(analytics_opts, 'COLLECTOR')
         cfg.CONF.register_opts(vrouter_opts, 'VROUTER')
@@ -265,7 +283,6 @@ class NeutronPluginContrailCoreBase(neutron_plugin_base_v2.NeutronPluginBaseV2,
 
     def create_network(self, context, network):
         """Creates a new Virtual Network."""
-
         return self._create_resource('network', context, network)
 
     def get_network(self, context, network_id, fields=None):
@@ -309,10 +326,10 @@ class NeutronPluginContrailCoreBase(neutron_plugin_base_v2.NeutronPluginBaseV2,
                 gateway = '::'
             subnet['subnet']['gateway_ip'] = gateway
 
-        if subnet['subnet']['host_routes'] != attr.ATTR_NOT_SPECIFIED:
+        if subnet['subnet']['host_routes'] != ATTR_NOT_SPECIFIED:
             if (len(subnet['subnet']['host_routes']) >
                     cfg.CONF.max_subnet_host_routes):
-                raise exc.HostRoutesExhausted(subnet_id=subnet[
+                raise neutron_exc.HostRoutesExhausted(subnet_id=subnet[
                     'subnet'].get('id', _('new subnet')),
                     quota=cfg.CONF.max_subnet_host_routes)
 
@@ -398,10 +415,11 @@ class NeutronPluginContrailCoreBase(neutron_plugin_base_v2.NeutronPluginBaseV2,
         # These ips are still on the port and haven't been removed
         prev_ips = []
 
-        # the new_ips contain all of the fixed_ips that are to be updated
-        if len(new_ips) > cfg.CONF.max_fixed_ips_per_port:
-            msg = _('Exceeded maximim amount of fixed ips per port')
-            raise exc.InvalidInput(error_message=msg)
+        if hasattr(cfg.CONF, 'max_fixed_ips_per_port'):
+            # the new_ips contain all of the fixed_ips that are to be updated
+            if len(new_ips) > cfg.CONF.max_fixed_ips_per_port:
+                msg = _('Exceeded maximum amount of fixed ips per port')
+                raise InvalidInput(error_message=msg)
 
         # Remove all of the intersecting elements
         for original_ip in original_ips[:]:
@@ -424,6 +442,10 @@ class NeutronPluginContrailCoreBase(neutron_plugin_base_v2.NeutronPluginBaseV2,
         """Creates a port on the specified Virtual Network."""
 
         port = self._create_resource('port', context, port)
+
+        if self.is_port_baremetal(port):
+            self.bind_baremetal_port(port)
+
         return port
 
     def get_port(self, context, port_id, fields=None):
@@ -445,6 +467,13 @@ class NeutronPluginContrailCoreBase(neutron_plugin_base_v2.NeutronPluginBaseV2,
                 original['fixed_ips'], port['port']['fixed_ips'])
             port['port']['fixed_ips'] = prev_ips + added_ips
 
+        if self.is_port_baremetal(port['port']):
+            port['port']['id'] = port_id
+            if self.should_bind_port(port['port']):
+                self.bind_baremetal_port(port['port'])
+            else:
+                self.unbind_baremetal_port(port['port'])
+
         return self._update_resource('port', context, port_id, port)
 
     def delete_port(self, context, port_id):
@@ -455,6 +484,11 @@ class NeutronPluginContrailCoreBase(neutron_plugin_base_v2.NeutronPluginBaseV2,
         the remote interface is first un-plugged and then the port
         is deleted.
         """
+
+        original = self._get_port(context, port_id)
+
+        if self.is_port_baremetal(original):
+            self.unbind_baremetal_port(original)
 
         self._delete_resource('port', context, port_id)
 
