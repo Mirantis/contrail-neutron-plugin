@@ -106,9 +106,9 @@ class LoadbalancerPoolManager(ResourceManager):
             res['members'] = [{'id': member['uuid']} for member in members]
 
         # health_monitor
-        hm_refs = pool.get_loadbalancer_healthmonitor_refs()
-        if hm_refs is not None:
-            res['healthmonitor_id'] = hm_refs[0]['uuid']
+        hm_back_refs = pool.get_loadbalancer_healthmonitor_back_refs()
+        if hm_back_refs is not None:
+            res['healthmonitor_id'] = hm_back_refs[0]['uuid']
 
         return self._fields(res, fields)
 
