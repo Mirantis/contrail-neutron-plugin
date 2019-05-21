@@ -57,10 +57,10 @@ class LoadbalancerHealthmonitorManager(ResourceManager):
                 res[mapping] = value
 
         pool_ids = []
-        pool_back_refs = healthmonitor.get_loadbalancer_pool_back_refs()
-        for pool_back_ref in pool_back_refs or []:
+        pool_refs = healthmonitor.get_loadbalancer_pool_refs()
+        for pool_ref in pool_refs or []:
             pool_id = {}
-            pool_id['pool_id'] = pool_back_ref['uuid']
+            pool_id['pool_id'] = pool_ref['uuid']
             pool_ids.append(pool_id)
         res['pools'] = pool_ids
 
@@ -116,10 +116,12 @@ class LoadbalancerHealthmonitorManager(ResourceManager):
             pool = self._api.loadbalancer_pool_read(id=m['pool_id'])
         except NoIdError:
             raise loadbalancerv2.EntityNotFound(name='Pool', id=m['pool_id'])
-        exist_hm_refs = pool.get_loadbalancer_healthmonitor_refs()
+        exist_hm_refs = pool.get_loadbalancer_healthmonitor_back_refs()
         if exist_hm_refs is not None:
             raise loadbalancerv2.OneHealthMonitorPerPool(pool_id=m['pool_id'],
                                                hm_id=exist_hm_refs[0]['uuid'])
+        monitor_db.set_loadbalancer_pool(pool)
+
         self._api.loadbalancer_healthmonitor_create(monitor_db)
         self._api.ref_update('loadbalancer-pool', m['pool_id'],
             'loadbalancer-healthmonitor', uuid, None, 'ADD')
@@ -127,8 +129,8 @@ class LoadbalancerHealthmonitorManager(ResourceManager):
 
     def delete(self, context, id):
         hm_obj = self._api.loadbalancer_healthmonitor_read(id=id)
-        for pool_back_refs in hm_obj.get_loadbalancer_pool_back_refs() or []:
-            self._api.ref_update('loadbalancer-pool', pool_back_refs['uuid'],
+        for pool_refs in hm_obj.get_loadbalancer_pool_refs() or []:
+            self._api.ref_update('loadbalancer-pool', pool_refs['uuid'],
                 'loadbalancer-healthmonitor', id, None, 'DELETE')
         super(LoadbalancerHealthmonitorManager, self).delete(context, id)
 
