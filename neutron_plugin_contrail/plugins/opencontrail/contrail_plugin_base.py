@@ -132,6 +132,9 @@ class NeutronPluginContrailCoreBase(neutron_plugin_base_v2.NeutronPluginBaseV2,
                                     vfbinding.Vfbinding):
 
     supported_extension_aliases = [
+        "service-type",
+        "standard-attr-timestamp",
+        "standard-attr-description",
         "security-group",
         "router",
         "port-security",
