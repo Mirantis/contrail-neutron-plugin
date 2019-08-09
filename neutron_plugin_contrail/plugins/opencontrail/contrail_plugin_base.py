@@ -52,6 +52,8 @@ except ImportError:
     from oslo_config import cfg
 from neutron.db import portbindings_base
 from neutron.db import quota_db  # noqa
+from neutron.db import models_v2
+from neutron.db import api as db_api
 from neutron.extensions import allowedaddresspairs
 from neutron.extensions import external_net
 from neutron.extensions import l3
@@ -197,6 +199,16 @@ class NeutronPluginContrailCoreBase(neutron_plugin_base_v2.NeutronPluginBaseV2,
         utils.register_vnc_api_options()
         self._parse_class_args()
         self.api_servers = utils.RoundRobinApiServers()
+        if cfg.CONF.notify_nova_on_port_status_changes:
+            #smatov: enable hook to notify nova on port status change
+            from neutron.notifiers import nova
+            self.nova_notifier = nova.Notifier.get_instance()
+            db_api.sqla_listen(models_v2.Port, 'after_insert',
+                               self.nova_notifier.send_port_status)
+            db_api.sqla_listen(models_v2.Port, 'after_update',
+                               self.nova_notifier.send_port_status)
+            db_api.sqla_listen(models_v2.Port.status, 'set',
+                               self.nova_notifier.record_port_status_changed)
 
     def get_agents(self, context, filters=None, fields=None):
         # This method is implemented so that horizon is happy
