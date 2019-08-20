@@ -137,7 +137,7 @@ class NeutronPluginContrailVpc(object):
                                              fields)
 
         LOG.debug("get_nat_instance(): " + pformat(nat_dicts))
-        return self._core._fields(nat_dicts, fields)
+        return nat_dicts
 
     def delete_nat_instance(self, context, nat_id):
         """
