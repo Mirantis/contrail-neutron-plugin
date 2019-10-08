@@ -29,6 +29,7 @@ class LoadbalancerMemberManager(ResourceManager):
         'weight': 'weight',
         'address': 'address',
         'subnet_id': 'subnet_id',
+        'name': 'name',
     }
 
     @property

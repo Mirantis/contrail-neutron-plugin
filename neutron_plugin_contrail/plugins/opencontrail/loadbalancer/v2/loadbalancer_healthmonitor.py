@@ -26,7 +26,8 @@ class LoadbalancerHealthmonitorManager(ResourceManager):
         'max_retries': 'max_retries',
         'http_method': 'http_method',
         'url_path': 'url_path',
-        'expected_codes': 'expected_codes'
+        'expected_codes': 'expected_codes',
+        'name': 'name',
     }
 
     @property
